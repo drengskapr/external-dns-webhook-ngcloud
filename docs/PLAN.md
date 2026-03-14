@@ -160,5 +160,28 @@ ngcloud requires a zone UUID for every record, but external-dns works with zone 
 
 ## Testing
 
-- DNS nameserver for test resolution: `185.247.187.83:53` (ns3.ngcloud.ru / Nubes nameserver)
-- Required env vars for integration tests: `TEST_ZONE_NAME`, `TEST_ZONE_UID`, `NGCLOUD_TOKEN`
+### Required env vars
+
+| Var | Description |
+|-----|-------------|
+| `NGCLOUD_TOKEN` | Bearer token for deck-api |
+| `NGCLOUD_ZONE_MAP` | e.g. `example.com=<uuid>` |
+| `TEST_ZONE_NAME` | DNS zone to use in tests (e.g. `example.com`) |
+| `TEST_ZONE_UID` | UUID of that zone in ngcloud |
+
+DNS nameserver for propagation checks: `185.247.187.83:53` (ns3.ngcloud.ru)
+
+### What to test first (priority order)
+
+1. **Create record** — most critical, mirrors the confirmed shell script flow. Create an A record and verify it appears in DNS.
+2. **Delete record** — delete the record created above, verify it disappears.
+3. **`GET /records` (ListRecords)** — two API endpoints are unconfirmed and need verification against the real API:
+   - `GET /instanceOperations?instanceUid=...` — assumed to support filtering by instance
+   - `GET /instanceOperationCfsParams?instanceOperationUid=...` — assumed to return CFS param values for a completed operation
+   If these don't exist or return unexpected structure, `ListRecords` will need to be reworked.
+4. **Update record** — change the target IP of an existing record (exercises delete-old + create-new).
+5. **Multi-target record** — create a record with two targets, verify both instances are created and both are cleaned up on delete.
+
+### Approach
+
+Write integration tests in `ngcloud/client_test.go` and `webhook/handlers_test.go` that run against the live API (guarded by `testing.Short()` or a build tag). Unit tests for pure logic (zone map resolution, display name generation, config parsing) can run without credentials.
