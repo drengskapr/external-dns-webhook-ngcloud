@@ -16,20 +16,15 @@ Reference implementation: [cert-manager-webhook-ngcloud](https://github.com/dren
 ├── go.mod / go.sum
 ├── Dockerfile
 ├── Makefile
-├── ngcloud/
-│   └── client.go        # HTTP client, auth, all deck-api calls (modelled after cert-manager webhook)
-├── webhook/
-│   ├── server.go        # HTTP server, routes, middleware
-│   ├── handlers.go      # GET /, GET /healthz, GET /records, POST /records, POST /adjustendpoints
-│   └── types.go         # Endpoint, Changes, DomainFilter (matching external-dns JSON schema)
-└── deploy/
-    └── external-dns-webhook-ngcloud/   # Helm chart
-        ├── Chart.yaml
-        ├── values.yaml
-        └── templates/
+├── internal/
+│   ├── ngcloud/
+│   │   ├── client.go        # HTTP client, auth, all deck-api calls
+│   │   └── types.go         # request/response structs for deck-api
+│   └── webhook/
+│       ├── server.go        # HTTP server, routes, middleware
+│       ├── handlers.go      # GET /, GET /healthz, GET /records, POST /records, POST /adjustendpoints
+│       └── types.go         # Endpoint, Changes, DomainFilter (matching external-dns JSON schema)
 ```
-
-> Flat `ngcloud/` package (not `internal/`) mirrors the cert-manager webhook structure.
 
 ---
 
@@ -141,14 +136,14 @@ ngcloud requires a zone UUID for every record, but external-dns works with zone 
 ## Implementation steps (ordered)
 
 1. `go mod init github.com/drengskapr/external-dns-webhook-ngcloud` + add `sigs.k8s.io/external-dns` for types, `k8s.io/klog/v2` for structured logging
-2. `ngcloud/client.go` — HTTP client with 30 s timeout, Bearer auth, low-level `get`/`post` helpers; high-level `CreateRecord`, `DeleteRecord`, `ListRecords`; CFS param cache populated at startup
-3. `webhook/types.go` — `Endpoint`, `Changes`, `DomainFilter` structs
-4. `webhook/handlers.go` — implement 5 route handlers
-5. `webhook/server.go` — wire routes, content-type middleware
-6. `main.go` — parse config, init klog (ISO8601), wire components, start server
-7. `Dockerfile` — multi-stage Go build → `gcr.io/distroless/static` (same as cert-manager webhook)
-8. `Makefile` — `build`, `test`, `docker-build`, `helm-install` targets
-9. Helm chart under `deploy/` — Deployment + Service + ConfigMap for zone map + Secret for token
+2. `internal/ngcloud/types.go` — deck-api request/response structs
+3. `internal/ngcloud/client.go` — HTTP client with 30 s timeout, Bearer auth, low-level `get`/`post` helpers; high-level `CreateRecord`, `DeleteRecord`, `ListRecords`; CFS param cache populated at startup
+4. `internal/webhook/types.go` — `Endpoint`, `Changes`, `DomainFilter` structs
+5. `internal/webhook/handlers.go` — implement 5 route handlers
+6. `internal/webhook/server.go` — wire routes, content-type middleware
+7. `main.go` — parse config, init klog (ISO8601), wire components, start server
+8. `Dockerfile` — multi-stage Go build → `gcr.io/distroless/static`
+9. `Makefile` — `build`, `test`, `docker-build` targets
 
 ---
 
