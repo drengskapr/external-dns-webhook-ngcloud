@@ -179,6 +179,15 @@ func TestApplyChangesCreateDelete(t *testing.T) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("create: expected 204, got %d", resp.StatusCode)
 	}
+	deleted := false
+	t.Cleanup(func() {
+		if !deleted {
+			do(t, ts, "POST", "/records", map[string]any{
+				"create": []map[string]any{}, "updateOld": []map[string]any{}, "updateNew": []map[string]any{},
+				"delete": []map[string]any{{"dnsName": dnsName, "targets": []string{"9.8.7.6"}, "recordType": "A"}},
+			}).Body.Close()
+		}
+	})
 
 	t.Log("GET /records — verify record present")
 	resp = do(t, ts, "GET", "/records", nil)
@@ -210,6 +219,7 @@ func TestApplyChangesCreateDelete(t *testing.T) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("delete: expected 204, got %d", resp.StatusCode)
 	}
+	deleted = true
 }
 
 // TestApplyChangesUpdate creates a record, updates it to a new IP, then deletes it.
@@ -232,6 +242,15 @@ func TestApplyChangesUpdate(t *testing.T) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("create: expected 204, got %d", resp.StatusCode)
 	}
+	deleted := false
+	t.Cleanup(func() {
+		if !deleted {
+			do(t, ts, "POST", "/records", map[string]any{
+				"create": []map[string]any{}, "updateOld": []map[string]any{}, "updateNew": []map[string]any{},
+				"delete": []map[string]any{{"dnsName": dnsName, "targets": []string{"2.2.2.2"}, "recordType": "A"}},
+			}).Body.Close()
+		}
+	})
 
 	update := map[string]any{
 		"create": []map[string]any{},
@@ -264,6 +283,7 @@ func TestApplyChangesUpdate(t *testing.T) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("delete: expected 204, got %d", resp.StatusCode)
 	}
+	deleted = true
 }
 
 // TestApplyChangesCNAME creates a CNAME record (without trailing dot, as external-dns sends it),
@@ -289,6 +309,15 @@ func TestApplyChangesCNAME(t *testing.T) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("create: expected 204, got %d", resp.StatusCode)
 	}
+	deleted := false
+	t.Cleanup(func() {
+		if !deleted {
+			do(t, ts, "POST", "/records", map[string]any{
+				"create": []map[string]any{}, "updateOld": []map[string]any{}, "updateNew": []map[string]any{},
+				"delete": []map[string]any{{"dnsName": dnsName, "targets": []string{cnameTarget}, "recordType": "CNAME"}},
+			}).Body.Close()
+		}
+	})
 
 	t.Log("GET /records — verify CNAME present without trailing dot")
 	resp = do(t, ts, "GET", "/records", nil)
@@ -325,4 +354,5 @@ func TestApplyChangesCNAME(t *testing.T) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("delete: expected 204, got %d", resp.StatusCode)
 	}
+	deleted = true
 }

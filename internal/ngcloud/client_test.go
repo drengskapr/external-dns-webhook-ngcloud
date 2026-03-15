@@ -73,12 +73,21 @@ func TestCreateDeleteRecord(t *testing.T) {
 	if err := c.CreateRecord(rec); err != nil {
 		t.Fatalf("CreateRecord: %v", err)
 	}
+	deleted := false
+	t.Cleanup(func() {
+		if !deleted {
+			if err := c.DeleteAllByName(rec.Name); err != nil {
+				t.Logf("cleanup: DeleteAllByName(%q): %v", rec.Name, err)
+			}
+		}
+	})
 	t.Log("record created")
 
 	t.Log("deleting record")
 	if err := c.DeleteAllByName(rec.Name); err != nil {
 		t.Fatalf("DeleteAllByName: %v", err)
 	}
+	deleted = true
 	t.Log("record deleted")
 }
 
@@ -100,12 +109,21 @@ func TestCreateDeleteTXTRecord(t *testing.T) {
 	if err := c.CreateRecord(rec); err != nil {
 		t.Fatalf("CreateRecord: %v", err)
 	}
+	deleted := false
+	t.Cleanup(func() {
+		if !deleted {
+			if err := c.DeleteAllByName(rec.Name); err != nil {
+				t.Logf("cleanup: DeleteAllByName(%q): %v", rec.Name, err)
+			}
+		}
+	})
 	t.Log("TXT record created")
 
 	t.Log("deleting TXT record")
 	if err := c.DeleteAllByName(rec.Name); err != nil {
 		t.Fatalf("DeleteAllByName: %v", err)
 	}
+	deleted = true
 	t.Log("TXT record deleted")
 }
 
@@ -128,12 +146,21 @@ func TestCreateDeleteCNAMERecord(t *testing.T) {
 	if err := c.CreateRecord(rec); err != nil {
 		t.Fatalf("CreateRecord: %v", err)
 	}
+	deleted := false
+	t.Cleanup(func() {
+		if !deleted {
+			if err := c.DeleteAllByName(rec.Name); err != nil {
+				t.Logf("cleanup: DeleteAllByName(%q): %v", rec.Name, err)
+			}
+		}
+	})
 	t.Log("CNAME record created")
 
 	t.Log("deleting CNAME record")
 	if err := c.DeleteAllByName(rec.Name); err != nil {
 		t.Fatalf("DeleteAllByName: %v", err)
 	}
+	deleted = true
 	t.Log("CNAME record deleted")
 }
 
@@ -172,6 +199,14 @@ func TestCreateListDelete(t *testing.T) {
 	if err := c.CreateRecord(rec); err != nil {
 		t.Fatalf("CreateRecord: %v", err)
 	}
+	deleted := false
+	t.Cleanup(func() {
+		if !deleted {
+			if err := c.DeleteAllByName(rec.Name); err != nil {
+				t.Logf("cleanup: DeleteAllByName(%q): %v", rec.Name, err)
+			}
+		}
+	})
 
 	t.Log("listing records")
 	records, err := c.ListRecords()
@@ -193,5 +228,6 @@ func TestCreateListDelete(t *testing.T) {
 	if err := c.DeleteAllByName(rec.Name); err != nil {
 		t.Fatalf("DeleteAllByName: %v", err)
 	}
+	deleted = true
 }
 

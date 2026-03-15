@@ -83,6 +83,12 @@ These labels are used to look up `svcOperationCfsParamId` from `fetchCFSParamDef
 
 - **`GET /instanceOperations?instanceUid=...`** — returns SQL error "operator does not exist: uuid = character varying". Never use this.
 
+### Instance lifecycle — platform limitation
+
+**`DELETE /instances/{uid}` is permanently forbidden once an instance has had any operation run on it** (HTTP 422 "Instance deletion disabled when having state"). There is no API path to remove instances programmatically after they have state.
+
+After a DNS delete operation completes, the instance transitions to `lastOperation: "delete"` but remains visible in the ngcloud UI indefinitely. The DNS record is fully removed from the nameserver; only the platform object lingers. These spent instances are filtered out by `ListRecords` (`lastOperation != "create"`) and do not affect DNS or future operations. They can only be removed manually via the ngcloud UI.
+
 ### Known API quirks
 
 - **`POST /run` always returns HTTP 500** — ignore; job still queues. Poll for actual outcome.

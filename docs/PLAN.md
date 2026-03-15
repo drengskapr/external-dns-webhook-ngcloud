@@ -101,6 +101,12 @@ success   = isSuccessful == true
 
 - **`GET /instanceOperations?instanceUid=...`** — SQL error "operator does not exist: uuid = character varying". Never use.
 
+### Instance lifecycle — platform limitation
+
+`DELETE /instances/{uid}` returns HTTP 422 "Instance deletion disabled when having state" for any instance that has had an operation run on it. Instances cannot be removed via the API once they have state.
+
+After a DNS delete operation completes, the instance remains in the ngcloud UI with `lastOperation: "delete"`. The DNS record is gone from the nameserver; only the platform object persists. These instances are invisible to `ListRecords` and do not affect DNS or future runs. Manual removal via the ngcloud UI is the only option.
+
 ---
 
 ## Key design decisions and platform constraints
