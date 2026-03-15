@@ -126,3 +126,45 @@ spec:
 ```
 
 Adjust `--source` (e.g. `service`, `ingress`, `crd`) and `--domain-filter` to match your setup. external-dns RBAC (ClusterRole/ClusterRoleBinding/ServiceAccount) follows the [standard external-dns setup](https://github.com/kubernetes-sigs/external-dns) and is independent of this webhook.
+
+### 3. Using the official external-dns Helm chart
+
+The [external-dns Helm chart](https://github.com/kubernetes-sigs/external-dns/tree/master/charts/external-dns) has built-in support for webhook providers via `provider.webhook.*` values.
+
+Create the Secret first (same as above), then install with a values file:
+
+```yaml
+# values.yaml
+provider:
+  name: webhook
+  webhook:
+    image:
+      repository: drengskapr/external-dns-webhook-ngcloud
+      tag: "0.1.0"
+    env:
+      - name: NGCLOUD_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: external-dns-ngcloud
+            key: NGCLOUD_TOKEN
+      - name: NGCLOUD_ZONE_MAP
+        valueFrom:
+          secretKeyRef:
+            name: external-dns-ngcloud
+            key: NGCLOUD_ZONE_MAP
+
+domainFilters:
+  - example.com
+
+sources:
+  - ingress
+```
+
+```bash
+helm repo add external-dns https://kubernetes-sigs.github.io/external-dns/
+helm upgrade --install external-dns external-dns/external-dns \
+  --namespace external-dns --create-namespace \
+  -f values.yaml
+```
+
+The chart automatically configures `--provider=webhook` and `--webhook-provider-url=http://localhost:8888` and adds a readiness probe on `/healthz`. Adjust `sources` and `domainFilters` to match your setup.
