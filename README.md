@@ -105,7 +105,7 @@ spec:
     spec:
       containers:
         - name: external-dns
-          image: registry.k8s.io/external-dns/external-dns:v0.14.2
+          image: registry.k8s.io/external-dns/external-dns:v0.20.0
           args:
             - --provider=webhook
             - --webhook-provider-url=http://localhost:8888
@@ -113,7 +113,7 @@ spec:
             - --domain-filter=example.com
             - --log-level=info
         - name: webhook
-          image: drengskapr/external-dns-webhook-ngcloud:latest
+          image: drengskapr/external-dns-webhook-ngcloud:0.1.0
           envFrom:
             - secretRef:
                 name: external-dns-ngcloud
