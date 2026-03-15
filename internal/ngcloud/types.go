@@ -14,13 +14,16 @@ type Record struct {
 // deck-api request/response types
 
 type Instance struct {
-	InstanceUID string `json:"instanceUid"`
-	DisplayName string `json:"displayName"`
+	InstanceUID      string `json:"instanceUid"`
+	DisplayName      string `json:"displayName"`
+	IsDeleted        bool   `json:"isDeleted"`
+	LastOperation    string `json:"lastOperation"`
+	LastOperationUID string `json:"lastOperationUid"`
 }
 
 type ListInstancesResponse struct {
-	Results    []Instance `json:"results"`
-	TotalCount int        `json:"totalCount"`
+	Results []Instance `json:"results"`
+	Total   int        `json:"total"`
 }
 
 type CreateInstanceRequest struct {
@@ -45,6 +48,7 @@ type CFSParamsDefResponse struct {
 type CreateOperationRequest struct {
 	SvcOperationID int    `json:"svcOperationId"`
 	InstanceUID    string `json:"instanceUid"`
+	Operation      string `json:"operation"`
 }
 
 type PushCFSParamRequest struct {
@@ -65,14 +69,10 @@ type GetOperationResponse struct {
 	InstanceOperation InstanceOperation `json:"instanceOperation"`
 }
 
-type ListOperationsResponse struct {
-	Results []InstanceOperation `json:"results"`
-}
-
 type CFSParamValue struct {
-	Label                 string `json:"label"`
-	ParamValue            string `json:"paramValue"`
-	SvcOperationCFSParamID int   `json:"svcOperationCfsParamId"`
+	SvcOperationCFSParam   string `json:"svcOperationCfsParam"` // internal name, e.g. "zoneUid"
+	ParamValue             string `json:"paramValue"`
+	SvcOperationCFSParamID int    `json:"svcOperationCfsParamId"`
 }
 
 type ListCFSParamValuesResponse struct {

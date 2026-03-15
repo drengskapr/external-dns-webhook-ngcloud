@@ -31,3 +31,7 @@ func (s *Server) Start() error {
 	addr := fmt.Sprintf(":%s", s.port)
 	return http.ListenAndServe(addr, s.handler)
 }
+
+func (s *Server) Handler() http.Handler {
+	return s.handler
+}

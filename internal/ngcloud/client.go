@@ -15,13 +15,22 @@ import (
 	"k8s.io/klog/v2"
 )
 
-// CFS parameter labels as defined by the ngcloud deck-api (Russian strings, immutable).
+// CFS parameter labels (Russian strings) used for the create operation's fetchCFSParamDefs.
 const (
 	cfsLabelZoneUID    = "UUID Зоны"
 	cfsLabelRecordType = "Тип DNS-записи"
 	cfsLabelName       = "Имя записи"
 	cfsLabelValue      = "Значение записи"
 	cfsLabelTTL        = "TTL записи (в секундах)"
+)
+
+// CFS parameter internal names returned by GET /instanceOperationCfsParams.
+const (
+	cfsParamZoneUID    = "zoneUid"
+	cfsParamRecordType = "recordType"
+	cfsParamName       = "recordName"
+	cfsParamValue      = "recordInput"
+	cfsParamTTL        = "recordTTL"
 )
 
 var operationUIDRe = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)
@@ -67,7 +76,8 @@ func (c *Client) DefaultTTL() int64 {
 }
 
 // ListRecords returns all DNS records managed by this provider.
-// It lists all instances and reconstructs each record from its operation's CFS param values.
+// It lists all instances and for each active (lastOperation=="create") instance
+// fetches the CFS param values from the create operation to reconstruct the record.
 func (c *Client) ListRecords() ([]Record, error) {
 	instances, err := c.listAllInstances()
 	if err != nil {
@@ -76,13 +86,12 @@ func (c *Client) ListRecords() ([]Record, error) {
 
 	var records []Record
 	for _, inst := range instances {
-		opUID, err := c.getLatestOperationUID(inst.InstanceUID)
-		if err != nil {
-			klog.V(4).InfoS("skip instance: no operation found", "instanceUID", inst.InstanceUID, "err", err)
+		if inst.LastOperation != "create" || inst.LastOperationUID == "" {
+			klog.V(4).InfoS("skip instance: not an active create", "instanceUID", inst.InstanceUID, "lastOp", inst.LastOperation)
 			continue
 		}
 
-		values, err := c.getCFSParamValues(opUID)
+		values, err := c.getCFSParamValues(inst.LastOperationUID)
 		if err != nil {
 			klog.V(4).InfoS("skip instance: could not read CFS values", "instanceUID", inst.InstanceUID, "err", err)
 			continue
@@ -90,12 +99,12 @@ func (c *Client) ListRecords() ([]Record, error) {
 
 		r := Record{
 			InstanceUID: inst.InstanceUID,
-			ZoneUID:     values[cfsLabelZoneUID],
-			Type:        values[cfsLabelRecordType],
-			Name:        values[cfsLabelName],
-			Value:       values[cfsLabelValue],
+			ZoneUID:     values[cfsParamZoneUID],
+			Type:        values[cfsParamRecordType],
+			Name:        values[cfsParamName],
+			Value:       values[cfsParamValue],
 		}
-		if ttlStr := values[cfsLabelTTL]; ttlStr != "" {
+		if ttlStr := values[cfsParamTTL]; ttlStr != "" {
 			r.TTL, _ = strconv.ParseInt(ttlStr, 10, 64)
 		}
 		if r.Name == "" || r.Type == "" || r.Value == "" {
@@ -125,7 +134,7 @@ func (c *Client) CreateRecord(r Record) error {
 	}
 	klog.V(2).InfoS("instance created", "instanceUID", instanceUID, "displayName", displayName)
 
-	opUID, err := c.createOperation(instanceUID, c.cfg.OpCreate)
+	opUID, err := c.createOperation(instanceUID, c.cfg.OpCreate, "create")
 	if err != nil {
 		return fmt.Errorf("create operation: %w", err)
 	}
@@ -169,11 +178,16 @@ func (c *Client) DeleteAllByName(name string) error {
 
 	prefix := "dnsrecord-" + name
 	for _, inst := range instances {
-		if inst.DisplayName == prefix || strings.HasPrefix(inst.DisplayName, prefix+"-") {
-			klog.V(2).InfoS("deleting instance", "instanceUID", inst.InstanceUID, "displayName", inst.DisplayName)
-			if err := c.deleteInstance(inst.InstanceUID); err != nil {
-				return fmt.Errorf("delete instance %s: %w", inst.InstanceUID, err)
-			}
+		if inst.DisplayName != prefix && !strings.HasPrefix(inst.DisplayName, prefix+"-") {
+			continue
+		}
+		if inst.LastOperation != "create" {
+			klog.V(4).InfoS("skip instance: not in created state", "instanceUID", inst.InstanceUID, "lastOp", inst.LastOperation)
+			continue
+		}
+		klog.V(2).InfoS("deleting instance", "instanceUID", inst.InstanceUID, "displayName", inst.DisplayName)
+		if err := c.deleteInstance(inst.InstanceUID); err != nil {
+			return fmt.Errorf("delete instance %s: %w", inst.InstanceUID, err)
 		}
 	}
 	return nil
@@ -206,11 +220,29 @@ func (c *Client) fetchCFSParamDefs(opID int) (map[string]int, error) {
 	return m, nil
 }
 
+// getCFSParamValues returns CFS param label→value pairs for a completed operation.
+func (c *Client) getCFSParamValues(opUID string) (map[string]string, error) {
+	q := url.Values{"instanceOperationUid": {opUID}}
+	body, err := c.get("instanceOperationCfsParams", q)
+	if err != nil {
+		return nil, err
+	}
+	var resp ListCFSParamValuesResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, err
+	}
+	m := make(map[string]string, len(resp.Results))
+	for _, v := range resp.Results {
+		m[v.SvcOperationCFSParam] = v.ParamValue
+	}
+	return m, nil
+}
+
 func (c *Client) listAllInstances() ([]Instance, error) {
 	var all []Instance
+	var totalReceived int
 	for page := 1; ; page++ {
 		q := url.Values{
-			"fields":    {"instanceUid,displayName"},
 			"serviceId": {strconv.Itoa(c.cfg.ServiceID)},
 			"page":      {strconv.Itoa(page)},
 			"pageSize":  {"100"},
@@ -223,8 +255,13 @@ func (c *Client) listAllInstances() ([]Instance, error) {
 		if err := json.Unmarshal(body, &resp); err != nil {
 			return nil, err
 		}
-		all = append(all, resp.Results...)
-		if len(resp.Results) == 0 || len(all) >= resp.TotalCount {
+		for _, inst := range resp.Results {
+			if !inst.IsDeleted {
+				all = append(all, inst)
+			}
+		}
+		totalReceived += len(resp.Results)
+		if len(resp.Results) == 0 || totalReceived >= resp.Total {
 			break
 		}
 	}
@@ -254,51 +291,12 @@ func (c *Client) findInstanceUID(displayName string) (string, error) {
 	return "", fmt.Errorf("instance with displayName %q not found", displayName)
 }
 
-// getLatestOperationUID returns the most recent operation UID for an instance.
-// NOTE: assumes GET /instanceOperations?instanceUid=... is supported by the API.
-func (c *Client) getLatestOperationUID(instanceUID string) (string, error) {
-	q := url.Values{
-		"instanceUid": {instanceUID},
-		"page":        {"1"},
-		"pageSize":    {"1"},
-	}
-	body, err := c.get("instanceOperations", q)
-	if err != nil {
-		return "", err
-	}
-	var resp ListOperationsResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return "", err
-	}
-	if len(resp.Results) == 0 {
-		return "", fmt.Errorf("no operations found for instance %s", instanceUID)
-	}
-	return resp.Results[0].InstanceOperationUID, nil
-}
 
-// getCFSParamValues returns CFS param label→value pairs for a completed operation.
-// NOTE: assumes GET /instanceOperationCfsParams?instanceOperationUid=... is supported.
-func (c *Client) getCFSParamValues(opUID string) (map[string]string, error) {
-	q := url.Values{"instanceOperationUid": {opUID}}
-	body, err := c.get("instanceOperationCfsParams", q)
-	if err != nil {
-		return nil, err
-	}
-	var resp ListCFSParamValuesResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, err
-	}
-	m := make(map[string]string, len(resp.Results))
-	for _, v := range resp.Results {
-		m[v.Label] = v.ParamValue
-	}
-	return m, nil
-}
-
-func (c *Client) createOperation(instanceUID string, svcOpID int) (string, error) {
+func (c *Client) createOperation(instanceUID string, svcOpID int, opName string) (string, error) {
 	headers, _, err := c.post("instanceOperations", CreateOperationRequest{
 		SvcOperationID: svcOpID,
 		InstanceUID:    instanceUID,
+		Operation:      opName,
 	})
 	if err != nil {
 		return "", err
@@ -322,11 +320,17 @@ func (c *Client) pushCFSParam(opUID string, cfsParamID int, value string) error 
 
 func (c *Client) runOperation(opUID string) error {
 	_, _, err := c.post(fmt.Sprintf("instanceOperations/%s/run", opUID), nil)
-	return err
+	if err != nil {
+		// The deck-api /run endpoint sometimes returns HTTP 500 but still queues the
+		// job successfully. Log the error and proceed to polling — the poll will
+		// determine the actual outcome.
+		klog.V(2).InfoS("run endpoint returned error, proceeding to poll", "operationUID", opUID, "err", err)
+	}
+	return nil
 }
 
 func (c *Client) deleteInstance(instanceUID string) error {
-	opUID, err := c.createOperation(instanceUID, c.cfg.OpDelete)
+	opUID, err := c.createOperation(instanceUID, c.cfg.OpDelete, "delete")
 	if err != nil {
 		return err
 	}

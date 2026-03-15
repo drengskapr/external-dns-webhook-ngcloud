@@ -13,18 +13,24 @@ import (
 
 // Handler holds the dependencies for all webhook HTTP handlers.
 type Handler struct {
-	client     *ngcloud.Client
-	zoneMap    map[string]string // DNS zone name → ngcloud zone UUID
-	domains    []string
-	defaultTTL int64
+	client      *ngcloud.Client
+	zoneMap     map[string]string // DNS zone name → ngcloud zone UUID
+	reverseZone map[string]string // ngcloud zone UUID → DNS zone name (derived from zoneMap)
+	domains     []string
+	defaultTTL  int64
 }
 
 func NewHandler(client *ngcloud.Client, zoneMap map[string]string, domains []string) *Handler {
+	rev := make(map[string]string, len(zoneMap))
+	for name, uid := range zoneMap {
+		rev[uid] = name
+	}
 	return &Handler{
-		client:     client,
-		zoneMap:    zoneMap,
-		domains:    domains,
-		defaultTTL: client.DefaultTTL(),
+		client:      client,
+		zoneMap:     zoneMap,
+		reverseZone: rev,
+		domains:     domains,
+		defaultTTL:  client.DefaultTTL(),
 	}
 }
 
@@ -50,8 +56,13 @@ func (h *Handler) GetRecords(w http.ResponseWriter, r *http.Request) {
 
 	endpoints := make([]*Endpoint, 0, len(records))
 	for _, rec := range records {
+		// Reconstruct FQDN: the API stores the relative name; append the zone.
+		dnsName := rec.Name
+		if zoneName, ok := h.reverseZone[rec.ZoneUID]; ok {
+			dnsName = rec.Name + "." + zoneName
+		}
 		endpoints = append(endpoints, &Endpoint{
-			DNSName:    rec.Name,
+			DNSName:    dnsName,
 			Targets:    []string{rec.Value},
 			RecordType: rec.Type,
 			RecordTTL:  rec.TTL,
@@ -73,7 +84,12 @@ func (h *Handler) ApplyChanges(w http.ResponseWriter, r *http.Request) {
 	// Deletes first to free up displayNames before creates.
 	for _, ep := range changes.Delete {
 		klog.V(2).InfoS("deleting record", "name", ep.DNSName, "type", ep.RecordType)
-		if err := h.client.DeleteAllByName(ep.DNSName); err != nil {
+		relativeName, _, err := h.resolveZone(ep.DNSName)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := h.client.DeleteAllByName(relativeName); err != nil {
 			klog.ErrorS(err, "delete record failed", "name", ep.DNSName)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -84,7 +100,12 @@ func (h *Handler) ApplyChanges(w http.ResponseWriter, r *http.Request) {
 	for i, old := range changes.UpdateOld {
 		nw := changes.UpdateNew[i]
 		klog.V(2).InfoS("updating record", "name", old.DNSName, "type", old.RecordType)
-		if err := h.client.DeleteAllByName(old.DNSName); err != nil {
+		relativeName, _, err := h.resolveZone(old.DNSName)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := h.client.DeleteAllByName(relativeName); err != nil {
 			klog.ErrorS(err, "delete old record failed", "name", old.DNSName)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -123,20 +144,29 @@ func (h *Handler) ApplyChanges(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// AdjustEndpoints handles POST /adjustendpoints — passthrough, no provider-specific adjustment needed.
+// AdjustEndpoints handles POST /adjustendpoints.
+// ngcloud enforces uniqueness on recordName per zone, so only one target per
+// endpoint is supported. Endpoints with multiple targets are truncated to one.
 func (h *Handler) AdjustEndpoints(w http.ResponseWriter, r *http.Request) {
 	var endpoints []*Endpoint
 	if err := json.NewDecoder(r.Body).Decode(&endpoints); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	for _, ep := range endpoints {
+		if len(ep.Targets) > 1 {
+			klog.V(2).InfoS("truncating multi-target endpoint to single target (platform limitation)", "name", ep.DNSName, "targets", ep.Targets)
+			ep.Targets = ep.Targets[:1]
+		}
+	}
 	w.Header().Set("Content-Type", contentType)
 	json.NewEncoder(w).Encode(endpoints)
 }
 
 // endpointToRecord converts a webhook Endpoint and a single target value into an ngcloud Record.
+// Record.Name is set to the relative name (zone suffix stripped) as required by the deck-api.
 func (h *Handler) endpointToRecord(ep *Endpoint, target string, idx int) (ngcloud.Record, error) {
-	zoneUID, err := h.resolveZoneUID(ep.DNSName)
+	relativeName, zoneUID, err := h.resolveZone(ep.DNSName)
 	if err != nil {
 		return ngcloud.Record{}, err
 	}
@@ -146,7 +176,7 @@ func (h *Handler) endpointToRecord(ep *Endpoint, target string, idx int) (ngclou
 	}
 	return ngcloud.Record{
 		ZoneUID:     zoneUID,
-		Name:        ep.DNSName,
+		Name:        relativeName,
 		Type:        ep.RecordType,
 		Value:       target,
 		TTL:         ttl,
@@ -154,8 +184,9 @@ func (h *Handler) endpointToRecord(ep *Endpoint, target string, idx int) (ngclou
 	}, nil
 }
 
-// resolveZoneUID finds the zone UUID for a DNS name by longest-suffix match against the zone map.
-func (h *Handler) resolveZoneUID(dnsName string) (string, error) {
+// resolveZone finds the zone for a DNS name by longest-suffix match.
+// Returns (relativeName, zoneUID, err) where relativeName has the zone suffix stripped.
+func (h *Handler) resolveZone(dnsName string) (relativeName, zoneUID string, err error) {
 	best, bestUID := "", ""
 	for zone, uid := range h.zoneMap {
 		if strings.HasSuffix(dnsName, zone) && len(zone) > len(best) {
@@ -164,7 +195,13 @@ func (h *Handler) resolveZoneUID(dnsName string) (string, error) {
 		}
 	}
 	if bestUID == "" {
-		return "", fmt.Errorf("no configured zone matches DNS name %q", dnsName)
+		return "", "", fmt.Errorf("no configured zone matches DNS name %q", dnsName)
 	}
-	return bestUID, nil
+	// Strip ".zone" suffix; if dnsName == zone exactly, relative name is "@" convention but
+	// external-dns never sends bare zone names, so TrimSuffix("."+zone) is safe.
+	rel := strings.TrimSuffix(dnsName, "."+best)
+	if rel == dnsName {
+		rel = strings.TrimSuffix(dnsName, best)
+	}
+	return rel, bestUID, nil
 }
