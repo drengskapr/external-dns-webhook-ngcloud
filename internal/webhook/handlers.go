@@ -61,9 +61,14 @@ func (h *Handler) GetRecords(w http.ResponseWriter, r *http.Request) {
 		if zoneName, ok := h.reverseZone[rec.ZoneUID]; ok {
 			dnsName = rec.Name + "." + zoneName
 		}
+		value := rec.Value
+		// Strip the trailing dot added for CNAME storage so external-dns sees the canonical form.
+		if rec.Type == "CNAME" {
+			value = strings.TrimSuffix(value, ".")
+		}
 		endpoints = append(endpoints, &Endpoint{
 			DNSName:    dnsName,
-			Targets:    []string{rec.Value},
+			Targets:    []string{value},
 			RecordType: rec.Type,
 			RecordTTL:  rec.TTL,
 		})
@@ -174,11 +179,16 @@ func (h *Handler) endpointToRecord(ep *Endpoint, target string, idx int) (ngclou
 	if ttl == 0 {
 		ttl = h.defaultTTL
 	}
+	value := target
+	// CNAME targets must end with a trailing dot for the ngcloud DNS backend.
+	if ep.RecordType == "CNAME" && !strings.HasSuffix(value, ".") {
+		value += "."
+	}
 	return ngcloud.Record{
 		ZoneUID:     zoneUID,
 		Name:        relativeName,
 		Type:        ep.RecordType,
-		Value:       target,
+		Value:       value,
 		TTL:         ttl,
 		TargetIndex: idx,
 	}, nil

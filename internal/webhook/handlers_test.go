@@ -265,3 +265,64 @@ func TestApplyChangesUpdate(t *testing.T) {
 		t.Fatalf("delete: expected 204, got %d", resp.StatusCode)
 	}
 }
+
+// TestApplyChangesCNAME creates a CNAME record (without trailing dot, as external-dns sends it),
+// verifies it appears in GET /records without trailing dot, then deletes it.
+func TestApplyChangesCNAME(t *testing.T) {
+	ts, zoneName, _ := newTestServer(t)
+
+	dnsName := fmt.Sprintf("webhook-cname-e2e.%s", zoneName)
+	cnameTarget := fmt.Sprintf("webhook-e2e.%s", zoneName) // no trailing dot
+
+	create := map[string]any{
+		"create": []map[string]any{
+			{"dnsName": dnsName, "targets": []string{cnameTarget}, "recordType": "CNAME", "recordTTL": 120},
+		},
+		"updateOld": []map[string]any{},
+		"updateNew": []map[string]any{},
+		"delete":    []map[string]any{},
+	}
+
+	t.Log("POST /records — create CNAME")
+	resp := do(t, ts, "POST", "/records", create)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("create: expected 204, got %d", resp.StatusCode)
+	}
+
+	t.Log("GET /records — verify CNAME present without trailing dot")
+	resp = do(t, ts, "GET", "/records", nil)
+	var endpoints []map[string]any
+	readJSON(t, resp, &endpoints)
+	found := false
+	for _, ep := range endpoints {
+		if ep["dnsName"] == dnsName {
+			targets, _ := ep["targets"].([]any)
+			if len(targets) > 0 && targets[0] == cnameTarget {
+				found = true
+			} else {
+				t.Errorf("CNAME target: want %q, got %v", cnameTarget, targets)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Errorf("CNAME record %q not found in GET /records", dnsName)
+	}
+
+	del := map[string]any{
+		"create":    []map[string]any{},
+		"updateOld": []map[string]any{},
+		"updateNew": []map[string]any{},
+		"delete": []map[string]any{
+			{"dnsName": dnsName, "targets": []string{cnameTarget}, "recordType": "CNAME"},
+		},
+	}
+
+	t.Log("POST /records — delete CNAME")
+	resp = do(t, ts, "POST", "/records", del)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete: expected 204, got %d", resp.StatusCode)
+	}
+}

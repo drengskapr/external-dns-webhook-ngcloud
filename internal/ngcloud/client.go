@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -125,7 +126,20 @@ func (c *Client) CreateRecord(r Record) error {
 		Descr:       "",
 	})
 	if err != nil {
-		return fmt.Errorf("create instance: %w", err)
+		if !strings.Contains(err.Error(), "not unique") {
+			return fmt.Errorf("create instance: %w", err)
+		}
+		// Deleted instances permanently hold their display names in the uniqueness index.
+		// Fall back to a randomised display name; deletion will find instances by recordName CFS param.
+		displayName = fmt.Sprintf("%s-%x", displayName, rand.Int31())
+		klog.V(2).InfoS("display name taken, using unique fallback", "displayName", displayName)
+		if _, _, err2 := c.post("instances", CreateInstanceRequest{
+			ServiceID:   c.cfg.ServiceID,
+			DisplayName: displayName,
+			Descr:       "",
+		}); err2 != nil {
+			return fmt.Errorf("create instance (fallback): %w", err2)
+		}
 	}
 
 	instanceUID, err := c.findInstanceUID(displayName)
@@ -168,26 +182,20 @@ func (c *Client) CreateRecord(r Record) error {
 	return c.pollOperation(opUID)
 }
 
-// DeleteAllByName deletes all ngcloud instances associated with the given DNS record name.
-// This covers both the primary instance (dnsrecord-<name>) and any indexed ones (dnsrecord-<name>-N).
+// DeleteAllByName deletes all ngcloud instances whose recordName CFS param matches name.
+// Matching by CFS param (not display name) makes deletion robust to display-name reuse constraints.
 func (c *Client) DeleteAllByName(name string) error {
-	instances, err := c.listAllInstances()
+	records, err := c.ListRecords()
 	if err != nil {
-		return fmt.Errorf("list instances: %w", err)
+		return fmt.Errorf("list records for delete: %w", err)
 	}
-
-	prefix := "dnsrecord-" + name
-	for _, inst := range instances {
-		if inst.DisplayName != prefix && !strings.HasPrefix(inst.DisplayName, prefix+"-") {
+	for _, rec := range records {
+		if rec.Name != name {
 			continue
 		}
-		if inst.LastOperation != "create" {
-			klog.V(4).InfoS("skip instance: not in created state", "instanceUID", inst.InstanceUID, "lastOp", inst.LastOperation)
-			continue
-		}
-		klog.V(2).InfoS("deleting instance", "instanceUID", inst.InstanceUID, "displayName", inst.DisplayName)
-		if err := c.deleteInstance(inst.InstanceUID); err != nil {
-			return fmt.Errorf("delete instance %s: %w", inst.InstanceUID, err)
+		klog.V(2).InfoS("deleting instance", "instanceUID", rec.InstanceUID, "name", name)
+		if err := c.deleteInstance(rec.InstanceUID); err != nil {
+			return fmt.Errorf("delete instance %s: %w", rec.InstanceUID, err)
 		}
 	}
 	return nil

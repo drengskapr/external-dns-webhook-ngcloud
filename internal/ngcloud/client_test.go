@@ -82,6 +82,61 @@ func TestCreateDeleteRecord(t *testing.T) {
 	t.Log("record deleted")
 }
 
+// TestCreateDeleteTXTRecord creates a TXT record and then deletes it.
+func TestCreateDeleteTXTRecord(t *testing.T) {
+	c := newTestClient(t)
+	zoneUID := testZoneUID(t)
+
+	rec := ngcloud.Record{
+		ZoneUID:     zoneUID,
+		Name:        "webhook-txt-test",
+		Type:        "TXT",
+		Value:       "v=spf1 include:example.com ~all",
+		TTL:         120,
+		TargetIndex: 0,
+	}
+
+	t.Log("creating TXT record")
+	if err := c.CreateRecord(rec); err != nil {
+		t.Fatalf("CreateRecord: %v", err)
+	}
+	t.Log("TXT record created")
+
+	t.Log("deleting TXT record")
+	if err := c.DeleteAllByName(rec.Name); err != nil {
+		t.Fatalf("DeleteAllByName: %v", err)
+	}
+	t.Log("TXT record deleted")
+}
+
+// TestCreateDeleteCNAMERecord creates a CNAME record and then deletes it.
+func TestCreateDeleteCNAMERecord(t *testing.T) {
+	c := newTestClient(t)
+	zoneUID := testZoneUID(t)
+	zoneName := testZoneName(t)
+
+	rec := ngcloud.Record{
+		ZoneUID:     zoneUID,
+		Name:        "webhook-cname-test",
+		Type:        "CNAME",
+		Value:       "webhook-test." + zoneName + ".", // trailing dot required by DNS backend
+		TTL:         120,
+		TargetIndex: 0,
+	}
+
+	t.Log("creating CNAME record")
+	if err := c.CreateRecord(rec); err != nil {
+		t.Fatalf("CreateRecord: %v", err)
+	}
+	t.Log("CNAME record created")
+
+	t.Log("deleting CNAME record")
+	if err := c.DeleteAllByName(rec.Name); err != nil {
+		t.Fatalf("DeleteAllByName: %v", err)
+	}
+	t.Log("CNAME record deleted")
+}
+
 // TestListRecords lists all records. Exercises the two unconfirmed API endpoints
 // (GET /instanceOperations?instanceUid=... and GET /instanceOperationCfsParams?instanceOperationUid=...).
 func TestListRecords(t *testing.T) {
